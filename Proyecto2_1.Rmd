@@ -1,0 +1,605 @@
+---
+title: "Proyecto 2"
+output: github_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+##Importar librerias
+```{r}
+
+library("tidyverse")
+library("cluster")
+library(factoextra)
+library("janitor")
+library(utf8)
+library("ggplot2")
+library(stringr)
+library(dplyr)
+library(pillar)
+library("psych")
+library("car")
+library("Hmisc")
+library("corrplot")
+library('flexclust')
+library('distances')
+
+
+
+```
+
+
+# Pre Procesamiento de los Datos
+
+##Limpieza de Datos
+En primer lugar verificaremos la existencia de datos NA o inexistentes, para luego proceder a eliminarlos.
+```{r}
+#write.csv(x = beats, file = "beats.RData", row.names = FALSE) 
+#beats <- read.csv("beats.csv")
+beats = na.omit(beats)
+dim(beats)
+```
+
+
+En segundo lugar, haremos una limpieza de variables según nuestro criterio, es decir, aquellas que hagan referencia a cosas similares como por ejemplo artist_name y artist_id, las variables explican lo mismo pero artist_id en este caso es un identificador unico, por lo que es mas preciso y procedremos a eliminar artisti_name. Existen otros casos en que algunas variables no nos serviran para hacer agrupacion o su cantidad de factores es muy alta y no explican bien el track en sí.
+```{r}
+beats1 <- select(beats, artist_id, album_id, album_type, album_release_year, album_release_date_precision, danceability, energy, key, loudness, mode, speechiness,   acousticness, instrumentalness, liveness, valence, tempo, duration_ms, time_signature, disc_number,  explicit, is_local, track_name, type, key_name, mode_name,track_id)
+
+```
+
+
+En tercer lugar, procederemos a eliminar los datos que esten duplicados y aquellas observaciones que tengan datos erroneos, por ejemplo podemos observar que en la variable album_release_year el mínimo es 0, lo que nos genera un poco de ruido, por lo que eliminaremos los datos que contengan el valor 0 en la variable album_release_year, de esta manera no afecta el posterior procesamiento de datos o generación de algún cluster equivocado.  
+```{r}
+
+beats1 <- beats1[!duplicated(beats1$track_id),]
+
+beats1 <- beats1[!grepl("0",beats1$album_release_year),]
+summary(beats1)
+
+dim(beats1)
+```
+En cuarto lugar, analizando la base datos, intuimos que la variable type, album_type y album_release_date_precision tenian un solo factor, por lo que para corroborar la información la analizamos como se muestra a continuación y efectivamente las variables type y album_type tenian una sola categoría. Esto quiere decir que estas variable no explican absolutamente nada la canción, por lo que procederemos a eliminarlas. Por otro lado, la variable album_release_date_precision tambien la eliminaremos ya que esta tiene dos factores que no son relevantes al tema de investigación. 
+```{r}
+beats1$type<-as.factor(beats1$type)
+beats1$album_type<-as.factor(beats1$album_type)
+beats1$album_release_date_precision<-as.factor(beats1$album_release_date_precision)
+str(beats1)
+
+
+beats_2 <- select(beats1, artist_id, album_id, album_release_year, danceability, energy, key, loudness, mode, speechiness,   acousticness, instrumentalness, liveness, valence, tempo, duration_ms, time_signature, disc_number,  explicit, is_local, track_name, key_name, mode_name,track_id)
+```
+# Muestreo
+Dada la gran cantidad de observaciones, será necesario realizar un muestreo representativo de la población total. Para esto, decidimos tomar una muestra del 20% (5.835), ya que la media y desviación estandar de este porcentaje es muy parecido al de la población total.
+```{r}
+
+apply(beats_2[,c(3,4,5,6,7,8,9,10,11,12,13,14,15,16,17)],2,mean)
+apply(beats_2[,c(3,4,5,6,7,8,9,10,11,12,13,14,15,16,17)],2,sd)
+
+set.seed(369)
+sampleIndex <- sample(1:nrow(beats_2),5835, replace = F)
+
+beats2 <- beats_2[sampleIndex,]
+
+dim(beats2)
+
+apply(beats2[,c(3,4,5,6,7,8,9,10,11,12,13,14,15,16,17)],2,mean)
+apply(beats2[,c(3,4,5,6,7,8,9,10,11,12,13,14,15,16,17)],2,sd)
+```
+
+##Revisar Estructura Datos
+
+Luego de haber limpiado la base de datos, transformamos las variables explicit e is_local, que son variables logicas, en variables numericas (1,0). De esta manera se les puede incluir en el dataset numerico. Por otro lado, enlistamos los nombres de las columnas en dos arreglos agrupandolas según variables numericas y variables categoricas.
+```{r}
+
+beats2$explicit = as.numeric(beats2$explicit)
+beats2$key = as.numeric(beats2$key)
+beats2$mode = as.numeric(beats2$mode)
+beats2$duration_ms = as.numeric(beats2$duration_ms)
+beats2$time_signature = as.numeric(beats2$time_signature)
+beats2$disc_number = as.numeric(beats2$disc_number)
+
+
+beats_char<- c("artist_id", "album_id", "track_name", "key_name", "mode_name", "track_id")
+beats_num <- c( "album_release_year", "danceability", "energy", "key", "loudness", "mode", "speechiness", "acousticness", "instrumentalness", "liveness", "valence", "tempo", "duration_ms", "time_signature", "disc_number",  "explicit")
+
+
+```
+
+##Separar Datos
+
+Después, separamos el dataset en dos segun el tipo de variable usando los arreglos anteriores.
+```{r}
+beatsnum <- beats2 %>% 
+  select(beats_num)
+beatschar <- beats2 %>% 
+  select(beats_char)
+
+
+str(beatsnum)
+```
+
+
+##Escalar Datos
+
+Es necesario escalar los datos, dado las diferentes escalas de numeros en las variables numericas.
+```{r}
+summary(beatsnum)
+#beatssca <- sapply(beatsnum, scale)
+beatssca = scale(beatsnum) %>% as_tibble()
+
+
+```
+
+
+#Procesamiento de los Datos
+
+# Clustering kmeans para K=10
+
+```{r}
+beatsnum = na.omit(beatsnum)
+
+
+modelo_kmeans <- kmeans(beatssca, centers = 10)
+modelo_kmeans2 <- kmeans(beatsnum, centers = 10)
+
+beatssca$clus <- modelo_kmeans$cluster %>% as.factor()
+beatsnum$clus <- modelo_kmeans2$cluster %>% as.factor()
+
+ggplot(beatsnum, aes(danceability, loudness, color=clus)) +
+  geom_point(alpha=0.5, show.legend = T) +
+  theme_bw()
+```
+ahora podemos ver mas o menos en base a que se agruparon, viendo los promedios de las variables en cada cluster. Viendo el info_clus2 ya que esos datos no estan escalados.
+```{r}
+info_clus <- modelo_kmeans$centers
+info_clus2 <- modelo_kmeans2$centers
+
+info_clus
+info_clus2
+```
+##Grafico de codo
+
+Aqui podemos ver que el valor de k "ideal" esta bajo 5
+```{r}
+SSinterior <- numeric(30)
+
+for(k in 1:30){
+  modelo <- kmeans(beatssca, centers = k)
+  SSinterior[k] <- modelo$tot.withinss
+}
+
+plot(SSinterior)
+
+SSinterior1 <- numeric(30)
+
+for(k in 1:30){
+  modelo <- kmeans(beatsnum, centers = k)
+  SSinterior1[k] <- modelo$tot.withinss
+}
+
+plot(SSinterior1)
+
+```
+
+
+
+##Inspección Visual
+
+```{r}
+beatssca$clus <- as.numeric(beatssca$clus)
+beatsnum$clus <- as.numeric(beatsnum$clus)
+
+# uso distancia euclidiana
+tempDist <- dist(beatssca) %>% as.matrix()
+tempDist <- dist(beatsnum) %>% as.matrix()
+
+#reordeno filas y columnas en base al cluster obtenido
+index <- sort(modelo_kmeans2$cluster, index.return=TRUE)
+tempDist <- tempDist[index$ix,index$ix]
+rownames(tempDist) <- c(1:nrow(beatsnum))
+colnames(tempDist) <- c(1:nrow(beatsnum))
+
+image(tempDist)
+
+
+index <- sort(modelo_kmeans$cluster, index.return=TRUE)
+tempDist <- tempDist[index$ix,index$ix]
+rownames(tempDist) <- c(1:nrow(beatssca))
+colnames(tempDist) <- c(1:nrow(beatssca))
+
+image(tempDist)
+```
+
+## Estadísticos 
+
+###Estadistico Hopkins, Indice de correlación, Indice de cohesión y separación
+
+Apesar de que el K ideal es bastante menor, los indices nos muestran que la agrupación que se realizo es bastante buena de todas maneras. Teniendo un indice de hopkins muy cercano a 1. Los indices de cohesion y separación sirven para comarparalos con otro K.
+```{r}
+hop <- get_clust_tendency(beatssca, n =30, graph = FALSE)
+hop2 <- get_clust_tendency(beatsnum, n = 30, graph = FALSE)
+
+print(hop)
+print(hop2)
+
+#----------------
+
+tempMatrix <- matrix(0, nrow = nrow(beatsnum), ncol = nrow(beatsnum))
+tempMatrix[which(index$x==1), which(index$x==1)]  <- 1
+tempMatrix[which(index$x==2), which(index$x==2)]  <- 1
+tempMatrix[which(index$x==3), which(index$x==3)]  <- 1
+tempMatrix[which(index$x==4), which(index$x==4)]  <- 1
+tempMatrix[which(index$x==5), which(index$x==5)]  <- 1
+tempMatrix[which(index$x==6), which(index$x==6)]  <- 1
+tempMatrix[which(index$x==7), which(index$x==7)]  <- 1
+tempMatrix[which(index$x==8), which(index$x==8)]  <- 1
+tempMatrix[which(index$x==9), which(index$x==9)]  <- 1
+tempMatrix[which(index$x==10), which(index$x==10)] <- 1
+
+#construyo matriz de disimilitud
+tempDist2 <- 1/(1+tempDist)
+
+#Calcula correlacion 
+cor <- cor(tempMatrix[upper.tri(tempMatrix)],tempDist2[upper.tri(tempDist2)])
+
+print(cor)
+
+#------------------------------
+
+#Cohesión
+withinCluster <- numeric(10)
+for (i in 1:10){
+  tempbeats <- beatssca[which(modelo_kmeans$cluster == i),]
+  withinCluster[i] <- sum(dist2(tempbeats,colMeans(tempbeats))^2)
+}
+cohesion = sum(withinCluster)
+#es equivalente a model$tot.withinss en k-means
+print(c(cohesion, modelo_kmeans$tot.withinss))
+
+#Separation
+meanbeats <- colMeans(beatssca)
+SSB <- numeric(10)
+for (i in 1:10){
+  tempbeats <- beatssca[which(modelo_kmeans$cluster==i),]
+  SSB[i] <- nrow(tempbeats)*sum((meanbeats-colMeans(tempbeats))^2)
+}
+separation = sum(SSB)
+
+print(separation)
+
+```
+
+
+##Coeficiente Sillhouette
+Coficiente de silueta bastante alto mayor a 0 y cercano a 1, buen indicio.
+
+```{r}
+library(cluster)
+
+coefSil <- silhouette(modelo_kmeans$cluster,dist(beatssca))
+summary(coefSil)
+
+coefSil2 <- silhouette(modelo_kmeans2$cluster,dist(beatsnum))
+summary(coefSil2)
+
+fviz_silhouette(coefSil2) + coord_flip()
+```
+
+#Mejor Valor de K
+Utilizamos el coeficiente de silhouette para encontrar el mejor valor de K.
+Considerando este grafico, donde podemos ver que el mejor valor esta en el 2 y luego comienza a disminuir, y tambien el anterior quelo ideal era un k cercano a 5, dejaremos como k optimo =3.
+```{r}
+coefSil=numeric(30)
+for (k in 2:30){
+  modelo <- kmeans(beatssca, centers = k)
+  temp <- silhouette(modelo$cluster,dist(beatssca))
+  coefSil[k] <- mean(temp[,3])
+}
+tempDF=data.frame(CS=coefSil,K=c(1:30))
+
+ggplot(tempDF, aes(x=K, y=CS)) + 
+  geom_line() +
+  scale_x_continuous(breaks=c(1:30))
+
+```
+
+
+# Clustering kmeans para K=3
+Luego de realizar 10-means 
+```{r}
+beatsnum = na.omit(beatsnum)
+
+
+modelo_kmeans <- kmeans(beatssca, centers = 3)
+modelo_kmeans2 <- kmeans(beatsnum, centers = 3)
+
+beatssca$clus <- modelo_kmeans$cluster %>% as.factor()
+beatsnum$clus <- modelo_kmeans2$cluster %>% as.factor()
+
+```
+
+```{r}
+info_clus <- modelo_kmeans$centers
+info_clus2 <- modelo_kmeans2$centers
+
+info_clus
+info_clus2
+
+ggplot(beatsnum, aes(danceability, loudness, color=clus)) +
+  geom_point(alpha=0.5, show.legend = T) +
+  theme_bw()
+
+ggplot(beatsnum, aes(explicit, album_release_year, color=clus)) +
+  geom_point(alpha=0.5, show.legend = T) +
+  theme_bw()
+
+ggplot(beatsnum, aes(liveness, duration_ms, color=clus)) +
+  geom_point(alpha=0.5, show.legend = T) +
+  theme_bw()
+
+ggplot(beatsnum, aes(energy, mode, color=clus)) +
+  geom_point(alpha=0.5, show.legend = T) +
+  theme_bw()
+```
+
+Con esta información, ya teniendo los clusters definitivos, vemos que el modelo agrupo mas que nada por duración de la cancion, por que tan explicita es un poco tambien y  minimamente por el año en que salio.
+
+##Inspección Visual
+```{r}
+beatssca$clus <- as.numeric(beatssca$clus)
+beatsnum$clus <- as.numeric(beatsnum$clus)
+
+# uso distancia euclidiana
+tempDist <- dist(beatssca) %>% as.matrix()
+tempDist <- dist(beatsnum) %>% as.matrix()
+
+#reordeno filas y columnas en base al cluster obtenido
+index <- sort(modelo_kmeans2$cluster, index.return=TRUE)
+tempDist <- tempDist[index$ix,index$ix]
+rownames(tempDist) <- c(1:nrow(beatsnum))
+colnames(tempDist) <- c(1:nrow(beatsnum))
+
+image(tempDist)
+
+
+index <- sort(modelo_kmeans$cluster, index.return=TRUE)
+tempDist <- tempDist[index$ix,index$ix]
+rownames(tempDist) <- c(1:nrow(beatssca))
+colnames(tempDist) <- c(1:nrow(beatssca))
+
+image(tempDist)
+```
+
+
+## Estadísticos 
+
+###Estadistico Hopkins, Indice de correlación, Indice de cohesión y separación
+El indice de hopkins y de correlación son sumamente parecidos al de k=10, se puede ver una diferencia en los indices de separación y cohesión, donde hay una leve mejora con k=3.
+```{r}
+hop <- get_clust_tendency(beatssca, n =30, graph = FALSE)
+hop2 <- get_clust_tendency(beatsnum, n = 30, graph = FALSE)
+
+print(hop)
+print(hop2)
+
+#----------------
+
+tempMatrix <- matrix(0, nrow = nrow(beatsnum), ncol = nrow(beatsnum))
+tempMatrix[which(index$x==1), which(index$x==1)]  <- 1
+tempMatrix[which(index$x==2), which(index$x==2)]  <- 1
+tempMatrix[which(index$x==3), which(index$x==3)]  <- 1
+#tempMatrix[which(index$x==4), which(index$x==4)]  <- 1
+#tempMatrix[which(index$x==5), which(index$x==5)]  <- 1
+
+
+#construyo matriz de disimilitud
+tempDist2 <- 1/(1+tempDist)
+
+#Calcula correlacion 
+cor <- cor(tempMatrix[upper.tri(tempMatrix)],tempDist2[upper.tri(tempDist2)])
+
+print(cor)
+
+#------------------------------
+
+#Cohesión
+withinCluster <- numeric(3)
+for (i in 1:3){
+  tempbeats <- beatssca[which(modelo_kmeans$cluster == i),]
+  withinCluster[i] <- sum(dist2(tempbeats,colMeans(tempbeats))^2)
+}
+cohesion = sum(withinCluster)
+#es equivalente a model$tot.withinss en k-means
+print(c(cohesion, modelo_kmeans$tot.withinss))
+
+#Separation
+meanbeats <- colMeans(beatssca)
+SSB <- numeric(3)
+for (i in 1:3){
+  tempbeats <- beatssca[which(modelo_kmeans$cluster==i),]
+  SSB[i] <- nrow(tempbeats)*sum((meanbeats-colMeans(tempbeats))^2)
+}
+separation = sum(SSB)
+
+print(separation)
+
+```
+
+
+##Coeficiente Sillhouette
+Este coeficiente esta sobre 0 y cercano a 1, lo que indica que es una buena agrupación de datos. Igual que con K =10
+```{r}
+coefSil <- silhouette(modelo_kmeans$cluster,dist(beatssca))
+summary(coefSil)
+
+coefSil2 <- silhouette(modelo_kmeans2$cluster,dist(beatsnum))
+summary(coefSil2)
+
+fviz_silhouette(coefSil2) + coord_flip()
+```
+```{r}
+
+```
+
+# Creacion de Lista
+En esta parte del código se armará la lista de reproducción basada en una cancion de referncia que se elige mediante un sample. Se hace un "merge" con el df que contiene los nombres de las canciones, de esta manera queda mas clara la agrupacion y podemos saber los nombres de las canciones de la lista.
+```{r}
+beatssca$duration <- ((beatsnum$duration_ms)/60000)
+
+merge(x = beatssca, y = beatschar)
+
+duration_i <- 0
+
+sampleIndex3 <- sample(1:nrow(beatssca),1, replace = F)
+
+cancion2 <- beatssca[sampleIndex3,]
+
+cancion2$clus
+
+numclus <- cancion2$clus
+
+beatsclus = filter(beatssca,clus == numclus)
+
+
+while (duration_i<=180) {
+  print(cancion2$track_name)
+  duration_i <- duration_i + cancion2$duration
+  sampleIndex3 <- sample(1:nrow(beatsclus),1, replace = F)
+  cancion2 <- beatsclus[sampleIndex3,]
+   
+}
+
+```
+
+
+Si se quisiese hacer un clustering más extenso se podria seguir con este codigo, y finalizarlo con lo mismo que esta en el chunk anterior, pero cambiando los parametros del df
+
+##Clustering Jerarquico
+
+En esta sección, haremos todo nuestro análisis en relación a un ejemplo base, es decir, elegiremos una canción aleatoria y el clusting jerárquico se realizará dentro del cluster en el que se encuentras esta canción según 3-Means.
+1º Elección random canción.
+2ª Guardamos valor de clus en una variable
+
+```{r}
+
+sampleIndex2 <- sample(1:nrow(beatssca),1, replace = F)
+
+cancion <- beatssca[sampleIndex2,]
+
+cancion$clus
+
+numclus <- cancion$clus
+
+beatsclus = filter(beatssca,clus == numclus)
+
+```
+
+# Distancia Euclideana
+```{r}
+d = dist(beatsclus, method = "euclidean")
+```
+
+# Complete Model
+```{r}
+set.seed(369)
+model_complete <- hclust(d, method = "complete")
+summary(model_complete)
+```
+
+# Ward Model
+```{r}
+set.seed(369)
+model_ward <- hclust(d, method = "ward.D")
+summary(model_ward)
+```
+
+# Comparacion metodos
+```{r}
+models <- c("complete", "ward")
+names(models) <- c("complete", "ward")
+
+agcoef <- function(x) {
+  agnes(beatsclus, method = x)$ac
+}
+
+sapply(models, agcoef)
+```
+
+
+```{r}
+install.packages('ggdendro')
+library('ggdendro')
+
+ggdendrogram(model_ward, rotate = TRUE, theme_dendro = TRUE) 
+```
+
+# Elección de h
+Nuestros clusters no pueden tener menos de 40 canciones aproximadamente, ya que el tiempo promedio de duracion son 282356 ms, es decir, 4.7 minutos, para que la lista de reproducción dure al menos 3 horas, estas deben tener como mencionamos, al menos 40 canciones.
+
+A partir de este gráfico, podemos interpetrar que el h correcto para tener una noción de la cantidad de clusters a generar.
+
+```{r}
+
+mean(beatsnum$duration_ms)
+
+res <- tibble("h" = quantile(d, probs  = (1:500)/500), n = 0)
+
+for (i in 1:500){
+  groups <- cutree(model_ward, h = res$h[i])  
+  res$n[i] <- groups %>% unique() %>% length()
+}  
+
+ggplot(res, aes(h, n)) + 
+  geom_point() + 
+  scale_x_log10() + 
+  scale_y_log10()
+```
+
+# Corte Arbol Jerarquico
+
+1º Determinamos un valor para h lo que nos entregara un valor distinto de k para cada h que escogamos, tambien podemos definir el k desde un inicio
+2º Se imprimen los tamaños de cada cluster
+3º Generamos una nueva columna para almacenar a que cluster pertenece cada observacion (tanto en data_pre y datanum)
+4º Graficamos las observaciones agrupadas por su cluster
+
+```{r}
+
+groups <- cutree(model_ward, h = 400)  
+coefsil <- silhouette(groups, d)
+groups %>% unique() %>% length()
+
+summary(coefsil)
+table(groups)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
