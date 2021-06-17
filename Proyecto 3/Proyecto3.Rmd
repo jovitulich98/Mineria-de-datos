@@ -1,0 +1,233 @@
+---
+title: "Proyecto 3"
+output: github_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Librerias
+```{r}
+library(tidyverse)
+library(GGally)
+library(regclass)
+library(pROC)
+library(rsample)
+library('corrplot')
+library(dplyr)
+library(utf8)
+library("ggplot2")
+library(stringr)
+library(pillar)
+library("psych")
+library("car")
+library("Hmisc")
+library("corrplot")
+library("recommenderlab")
+library(readr)
+
+```
+
+
+## Cargar Datos
+```{r}
+db <- readRDS("endurance (1).rds")
+ #View(db)
+```
+
+
+## Limpieza de Datos
+Comenzamos eliminando los datos NA.
+```{r}
+db = na.omit(db)
+dim(db)
+```
+Observamos el dataframe y sus tipos de datos. 
+```{r}
+str(db)
+
+summary(db)
+```
+
+De lo anterior podemos observar que en variables como moving time, elapsed time y distance hay un minimo de 0, lo que no tiene mucho sentido, por lo que veremos cuantas variables tienen valor y las eliminaremos.
+```{r}
+db %>% filter(moving_time == 0 ) %>% nrow()
+db %>% filter(elapsed_time == 0 ) %>% nrow()
+db %>% filter(distance == 0 ) %>% nrow() 
+
+```
+
+```{r}
+db <- db %>%  filter(moving_time != 0)
+db <- db %>%  filter(elapsed_time != 0)
+db <- db %>%  filter(distance != 0)
+
+summary(db)
+```
+
+Ahora, revisaremos la cantidad de factores de algunas variables para ver si efectivamente seran utiles para nuestro analisis posterior. (En el caso que tengan cantidad de factores similar a la cantidad de filas o cantidad de factores igual a 1, esta variable se eliminaria) 
+```{r}
+db$athlete<-as.factor(db$athlete)
+db$device_name<-as.factor(db$device_name)
+db$records<-as.factor(db$records)
+db$type<-as.factor(db$type)
+db$has_heartrate<-as.factor(db$has_heartrate)
+
+str(db)
+```
+
+Segun lo anterior, cambiamos los tipos de variable a numérica para su posterior procesamiento.
+```{r}
+db$calories<-as.numeric(db$calories)
+db$distance<-as.numeric(db$distance)
+db$elev_low<-as.numeric(db$elev_low)
+db$elev_high<-as.numeric(db$elev_high)
+db$max_speed<-as.numeric(db$max_speed)
+db$average_speed<-as.numeric(db$average_speed)
+db$has_heartrate<-as.numeric(db$has_heartrate)
+db$total_elevation_gain<-as.numeric(db$total_elevation_gain)
+db$athlete<-as.numeric(db$athlete)
+db$records<-as.numeric(db$records)
+db$device_name<-as.numeric(db$device_name)
+db$type<-as.numeric(db$type)
+
+str(db)
+```
+
+Una vez ya listos nuestro datos, realizamos una visualizacion de nuestro datos numericos, para ver la correlacion que pueda existir entre las variables y la distribucion de los datos.
+
+Del gráfico se puede inferir:
+-variable distance esta alta e indirectamente relacionada con la variable type (variable a predecir).(-0,3)
+-variable distance esta alta y directamente relacionada con la variable calories. (0,51)
+-variable distance esta alta y directamente relacionada con la variable max_speed.(0,59)
+-variable distance esta alta y directamente relacionada con la variable total_elevation_gain.(0,44)
+-variable max_speed esta alta e indirectamente relacionada con la variable type.(-0,53)
+
+Nosotras intuimos que las varibales que tienen que ver con elevación podrian estar tratando de explicar lo mismo. Es por esto, que luego de realizar la correlación entre estas, vimos que la variable elev_high esta alta y directamente relacionada con las variables elev_low y total_elevation_gain. Por lo tanto, decidimos eliminar esta variable ya que nos parece redundante para nuestro analisis. Ademas, la variable elev_high y type tien una correlación casi igual a 0, lo que quiere decir que esta variable no explica nada la variable a predecir.
+
+Mas allá de lo que dicen los datos, bajo nuestros conocimientos sobre el contexto del problema, es decir, "deporte" y lo que sabemos acerca de los tributos.
+
+De lo anterior, las variables que nombramos en el listado, podrian ser las variables mas relevantes para nuestro modelo. 
+
+```{r}
+attach(db)
+
+cor.plot(cbind(type, athlete, calories, distance, elev_low, elev_high, records, max_speed, moving_time, elapsed_time, average_speed, has_heartrate, total_elevation_gain, device_name))
+
+cor(x = cbind(type, athlete, calories, distance, elev_low, elev_high, records, max_speed, moving_time, elapsed_time, average_speed, has_heartrate, total_elevation_gain,  device_name), method = "pearson")
+
+```
+# Detección de datos ingresados erroneamente (Outliers)
+
+Haremos detección de outliers con la técnica de mahalanobis.
+
+Del histograma lo unico que se puede concluir es que hay muy pocos outliers o registros mal hechos.
+
+Del grafico de type vs mah, podemos observar que la mayor cantidad de outliers se encuentra registrado para el type=3.
+
+Del grafico max_speed vs mah, podemos observar que la mayor cantidad de outliers se encuentra en velocidades muy bajas.
+
+De lo anterior, se puede deducir que quizas hay muchos registros erroneos donde el type=3 (que es posible que sea de una actividad en bicicleta), tenga registrada una velocidad maxima muy baja, lo que no tiene mucho sentido, por lo que se considerarán outliers.
+```{r}
+db$mah = mahalanobis(cbind(type, athlete, calories, distance, elev_low, elev_high, records, max_speed, moving_time, elapsed_time, average_speed, has_heartrate, total_elevation_gain, device_name) ,
+                            colMeans(cbind(type, athlete, calories, distance, elev_low, elev_high, records, max_speed, moving_time, elapsed_time, average_speed, has_heartrate, total_elevation_gain, device_name)),
+                            cov(cbind(type, athlete, calories, distance, elev_low, elev_high, records, max_speed, moving_time, elapsed_time, average_speed, has_heartrate, total_elevation_gain, device_name)))
+
+hist(db$mah)
+
+
+plot(type,db$mah)
+plot(max_speed,db$mah)
+
+
+
+
+```
+Aqui graficaremos todas las observaciones, donde en una escala de colores será posible identificar las observaciones con una mayor distancia de mahalanobis, la que se considerará como outlier.
+
+Del gráfico se puede inferir que muchos outliers no hay, pero  el numero maximo es muy alto. Consideraremos una distancia de mahanalis sobre 1000 un outlier.
+```{r}
+
+max(db$mah)
+min(db$mah)
+ggplot(data=db, aes(x=c(1:148400),y=db$mah,color=db$mah)) +
+  geom_point(size=1,alpha=0.8)+theme_bw()+
+  scale_color_gradient(low="blue",high="red")+
+  ggtitle("Distancia Mahalanobis por registro") + 
+  theme_bw() +
+  theme(plot.title = element_text(size = 20, face="bold", hjust=0.5),
+        axis.title = element_text(size = 15),
+        axis.text = element_text(size = 10, color="black")) +
+  xlab("Registros") + 
+  ylab("Distancia Mahalanobis") 
+
+```
+#Eliminacion de outliers
+
+Viendo las diemnsiones de la base de datos antes y despues de la eliminacion de outliers, reafirmamos lo dicho anteriormente, con que son muy pocos los que tienen un valor muy alto.
+```{r}
+dim(db)
+db <- filter(db, db$mah < 1000 )
+dim(db)
+
+```
+
+```{r}
+##db<-na.omit(db)
+
+
+glimpse(db)
+
+set.seed(369)
+glm1 <- glm(type ~ max_speed, data = db)
+
+summary(glm1)
+```
+
+```{r}
+prob <- predict(glm1)
+
+db$prob <- prob
+
+curva_roc <- roc(type ~ prob, data = db)
+
+plot(curva_roc)
+auc(curva_roc)
+```
+
+```{r}
+
+modelo_log_multi <- glm(type ~ athlete + calories +  max_speed + distance  , data = db)
+
+summary(modelo_log_multi)
+```
+
+```{r}
+prob_multi <- predict(modelo_log_multi, type = c("response"))
+
+db$prob_multi <- prob_multi
+
+curva_roc_multi <- roc(type ~ prob_multi, data = db)
+
+plot(curva_roc_multi)
+auc(curva_roc_multi)
+```
+
+```{r}
+set.seed(369)
+
+data_split <- initial_split(db,
+                            prop = 0.7,
+                            strata = NULL)
+
+train_data <- training(data_split) %>% as.data.frame() 
+test_data <- testing(data_split) %>%  as.data.frame()
+
+test_data$prob_multi <- predict(modelo_log_multi, test_data, type = c("response"))
+auc(roc(type ~ prob_multi, data = test_data))
+```
+
+
+
+
