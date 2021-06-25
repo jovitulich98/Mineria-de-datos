@@ -26,24 +26,33 @@ library("Hmisc")
 library("corrplot")
 library("recommenderlab")
 library(readr)
+library(discrim)
+library(tidymodels)
+library(caret)
+library(plyr)
+library(rpart)
+library(rpart.plot)
+library(e1071)
+library(rattle)  
+library(ROCR) 
 
 ```
 
 
-## Cargar Datos
+# Cargar Datos
 ```{r}
 db <- readRDS("endurance (1).rds")
  #View(db)
 ```
 
 
-## Limpieza de Datos
+# Limpieza de Datos
 Comenzamos eliminando los datos NA.
 ```{r}
 db = na.omit(db)
 dim(db)
 ```
-Observamos el dataframe y sus tipos de datos. 
+# Observamos el dataframe y sus tipos de datos. 
 ```{r}
 str(db)
 
@@ -74,10 +83,14 @@ db$records<-as.factor(db$records)
 db$type<-as.factor(db$type)
 db$has_heartrate<-as.factor(db$has_heartrate)
 
-str(db)
+
+summary(db)
+
 ```
 
-Segun lo anterior, cambiamos los tipos de variable a numérica para su posterior procesamiento.
+Segun lo anterior, podemos ver que hasta ahora ninguna variable se debería eliminar ya que no ocurrre ninguna de las 2 condiciones anteriores. Pero somos capaces de identificar los 5 distintos factores de la variable type: "EBike Ride", "Hike", "Ride", "Run"y "Walk" .
+
+Ahora continuaremos cambiando los tipos de variables a numérica para su posterior procesamiento.
 ```{r}
 db$calories<-as.numeric(db$calories)
 db$distance<-as.numeric(db$distance)
@@ -95,20 +108,9 @@ db$type<-as.numeric(db$type)
 str(db)
 ```
 
-Una vez ya listos nuestro datos, realizamos una visualizacion de nuestro datos numericos, para ver la correlacion que pueda existir entre las variables y la distribucion de los datos.
+Una vez ya preparado el dataset, realizamos una visualizacion de nuestro datos numericos, para ver la correlacion que pueda existir entre las variables y la distribucion de los datos.
 
-Del gráfico se puede inferir:
--variable distance esta alta e indirectamente relacionada con la variable type (variable a predecir).(-0,3)
--variable distance esta alta y directamente relacionada con la variable calories. (0,51)
--variable distance esta alta y directamente relacionada con la variable max_speed.(0,59)
--variable distance esta alta y directamente relacionada con la variable total_elevation_gain.(0,44)
--variable max_speed esta alta e indirectamente relacionada con la variable type.(-0,53)
-
-Nosotras intuimos que las varibales que tienen que ver con elevación podrian estar tratando de explicar lo mismo. Es por esto, que luego de realizar la correlación entre estas, vimos que la variable elev_high esta alta y directamente relacionada con las variables elev_low y total_elevation_gain. Por lo tanto, decidimos eliminar esta variable ya que nos parece redundante para nuestro analisis. Ademas, la variable elev_high y type tien una correlación casi igual a 0, lo que quiere decir que esta variable no explica nada la variable a predecir.
-
-Mas allá de lo que dicen los datos, bajo nuestros conocimientos sobre el contexto del problema, es decir, "deporte" y lo que sabemos acerca de los tributos.
-
-De lo anterior, las variables que nombramos en el listado, podrian ser las variables mas relevantes para nuestro modelo. 
+ ## AGREGAR BOXPLOTSS
 
 ```{r}
 attach(db)
@@ -117,18 +119,28 @@ cor.plot(cbind(type, athlete, calories, distance, elev_low, elev_high, records, 
 
 cor(x = cbind(type, athlete, calories, distance, elev_low, elev_high, records, max_speed, moving_time, elapsed_time, average_speed, has_heartrate, total_elevation_gain,  device_name), method = "pearson")
 
+table(db$type)
+
+
+
 ```
+Del gráfico se puede inferir:
+-variable distance esta alta e indirectamente relacionada con la variable type (variable a predecir).(-0,3)
+-variable distance esta alta y directamente relacionada con la variable calories. (0,51)
+-variable distance esta alta y directamente relacionada con la variable max_speed.(0,59)
+-variable distance esta alta y directamente relacionada con la variable total_elevation_gain.(0,44)
+-variable max_speed esta alta e indirectamente relacionada con la variable type.(-0,53)
+
+Nosotras intuimos que las varibales que tienen que ver con elevación podrian estar tratando de explicar lo mismo (esten relacionadas). Es por esto, que luego de realizar la correlación entre estas, vimos que la variable elev_high esta alta y directamente correlacionada con las variables elev_low y total_elevation_gain. Por lo tanto, decidimos eliminar esta variable ya que nos parece redundante para nuestro analisis. Ademas, la variable elev_high y type tien una correlación casi igual a 0, lo que quiere decir que esta variable no explica nada la variable a predecir.
+
+
+De lo anterior, las variables que nombramos en el listado, podrian ser las variables mas relevantes para nuestro modelo. 
+
+
 # Detección de datos ingresados erroneamente (Outliers)
 
-Haremos detección de outliers con la técnica de mahalanobis.
+Mediante la detección de outliers con el metodo de mahalanobis identificaremos los registros mal ingresados, ya que una observación mal registrada (erronea) puede ser considerada como una anomalía.
 
-Del histograma lo unico que se puede concluir es que hay muy pocos outliers o registros mal hechos.
-
-Del grafico de type vs mah, podemos observar que la mayor cantidad de outliers se encuentra registrado para el type=3.
-
-Del grafico max_speed vs mah, podemos observar que la mayor cantidad de outliers se encuentra en velocidades muy bajas.
-
-De lo anterior, se puede deducir que quizas hay muchos registros erroneos donde el type=3 (que es posible que sea de una actividad en bicicleta), tenga registrada una velocidad maxima muy baja, lo que no tiene mucho sentido, por lo que se considerarán outliers.
 ```{r}
 db$mah = mahalanobis(cbind(type, athlete, calories, distance, elev_low, elev_high, records, max_speed, moving_time, elapsed_time, average_speed, has_heartrate, total_elevation_gain, device_name) ,
                             colMeans(cbind(type, athlete, calories, distance, elev_low, elev_high, records, max_speed, moving_time, elapsed_time, average_speed, has_heartrate, total_elevation_gain, device_name)),
@@ -144,9 +156,17 @@ plot(max_speed,db$mah)
 
 
 ```
-Aqui graficaremos todas las observaciones, donde en una escala de colores será posible identificar las observaciones con una mayor distancia de mahalanobis, la que se considerará como outlier.
+Del histograma lo unico que se puede concluir es que hay muy pocos outliers o registros mal hechos, ya que se puede observar como todos los datos se concentran en la parte izquierda del grafico, los outliers debiesen ser tan pocos que no alcanzan a formar una barra.
 
-Del gráfico se puede inferir que muchos outliers no hay, pero  el numero maximo es muy alto. Consideraremos una distancia de mahanalis sobre 1000 un outlier.
+Del grafico de type vs mah, podemos observar que la mayor cantidad de outliers se encuentra registrado para el type=3, que corresponde al tipo de actividad "Ride".
+
+Del grafico max_speed vs mah, podemos observar que la mayor cantidad de outliers se encuentra en velocidades muy bajas.
+
+De lo anterior, se puede deducir que quizas hay algunos registros donde el type=3, que es una actividad en bicicleta, tenga registrada una velocidad maxima muy baja, lo que no tiene mucho sentido, ya que esta es una actividad que por lo general alcanza una velocidad máxima mayor al resto, por lo que se considerarán outliers.
+
+
+Ahora graficaremos todas las observaciones, donde en una escala de colores será posible identificar las observaciones con una mayor distancia de mahalanobis, la que se considerará como outlier.
+
 ```{r}
 
 max(db$mah)
@@ -163,9 +183,11 @@ ggplot(data=db, aes(x=c(1:148400),y=db$mah,color=db$mah)) +
   ylab("Distancia Mahalanobis") 
 
 ```
+Del gráfico se puede inferir que muchos outliers no hay, pero  la distancia de mahalonobis maxima es muy alta, por lo que es verdad que hay muy pocos outliers, pero los que hay son bastante atípicos. Consideraremos una distancia de mahalanobis sobre 1000 un outlier.
+
+
 #Eliminacion de outliers
 
-Viendo las diemnsiones de la base de datos antes y despues de la eliminacion de outliers, reafirmamos lo dicho anteriormente, con que son muy pocos los que tienen un valor muy alto.
 ```{r}
 dim(db)
 db <- filter(db, db$mah < 1000 )
@@ -173,18 +195,27 @@ dim(db)
 
 ```
 
-```{r}
-##db<-na.omit(db)
+Viendo las diemnsiones de la base de datos antes y despues de la eliminacion de outliers, reafirmamos lo dicho anteriormente, con que son muy pocos los que tienen un valor muy alto (muy atipico).
 
+
+
+## Regresión logística
+
+Como una primera etapa del modelamiento comenzaremos con un modelo de regresión logística simple, utilizando solo la variable max_speed, ya que era esta la que tenía mayor correlacion con la variable a predecir.
+```{r}
 
 glimpse(db)
 
 set.seed(369)
 glm1 <- glm(type ~ max_speed, data = db)
 
-summary(glm1)
-```
 
+summary(glm1)
+
+```
+Los resultados nos arrojan que tanto el intercepto como la velocidad maxima son variables significativas a la hora de clasificar el tipo de actividad.
+
+A continuación calcularemos el area bajo la curva ROC para medir el desempeño del modelo con una sola variable.
 ```{r}
 prob <- predict(glm1)
 
@@ -195,7 +226,11 @@ curva_roc <- roc(type ~ prob, data = db)
 plot(curva_roc)
 auc(curva_roc)
 ```
+El resultado es de AUC = 91,38%. Esto significa que tiene un gran poder de clasificación. Efectivamente la variable max_speed por si sola explica bastante los tipos de actividades.
 
+Ahora veremos si este desempeño mejora incorporando mas variables.
+
+# Regresión logística multivariable.
 ```{r}
 
 modelo_log_multi <- glm(type ~ athlete + calories +  max_speed + distance  , data = db)
@@ -203,8 +238,9 @@ modelo_log_multi <- glm(type ~ athlete + calories +  max_speed + distance  , dat
 summary(modelo_log_multi)
 ```
 
+Para modelar en este caso se fue probando con distintas combinaciones de variables. Al principio con todas, luego se fueron descartando las que al eliminarlas el AUC empeoraba o mantenía, ya que no eran significativas. Las mas importantes terminaron siendo athlete, calories, max_speed y distance.
 ```{r}
-prob_multi <- predict(modelo_log_multi, type = c("response"))
+prob_multi <- predict(modelo_log_multi, type = "response")
 
 db$prob_multi <- prob_multi
 
@@ -212,8 +248,11 @@ curva_roc_multi <- roc(type ~ prob_multi, data = db)
 
 plot(curva_roc_multi)
 auc(curva_roc_multi)
-```
 
+```
+Podemos ver que el AUC aumento a 91,64%, lo que en realidad es muy poco, por lo que realmente re afirmamos lo anterior con respecto a que la variable más importante es max_speed. 
+
+De todas formas esos altos resultados se pudieron haber dado por un sobre entrenamiento del modelo, por lo que ahora se probara el desempeño del modelo mediante un set de datos para entrenarlo (train_data) y otro set para probarlo (test data), de esta manera mediremos realmente como está funcionando. 
 ```{r}
 set.seed(369)
 
@@ -225,9 +264,157 @@ train_data <- training(data_split) %>% as.data.frame()
 test_data <- testing(data_split) %>%  as.data.frame()
 
 test_data$prob_multi <- predict(modelo_log_multi, test_data, type = c("response"))
+
 auc(roc(type ~ prob_multi, data = test_data))
+
+
+```
+Entrenando al modelo podemos observar que su AUC es aun mayor, siendo este de 92,8%, lo que es un  muy buen indicador, asegurándonos de que no sea un modelo sobre entrenado.
+
+
+## Arbol de decisión
+
+Como primera parte, de los 5 factores que tiene la variable "type", los dejaremos solo en 2: Los que son a pie y los que usan bicicleta. Esto lo dejaremos en una nueva variable binaria llamada "is_walk" donde el 1 corresponde a las actividades a pie y el 0 a las que usan bicicleta. 
+Esto lo haremos ya que la cantidad de observaciones que hay en relacion a los tipos de factores es muy desigual, lo que va a hacer que el modelo sea acertivo solo para los factores que tienen muchas observaciones. Si lo separamos solo en dos factores se nivela la "cancha".
+
+Luego, como se hizo en el modelo anterior, se divide el set de datos en uno de entrenamiento y en otro de prueba, con un 75% y 25% de los datos respectivamente.
+
+```{r}
+
+db <- db %>% mutate(is_walk = ifelse(type %in% c("2", "4", "5"),1,0))
+ summary(db)
+ 
+ set.seed(369)
+ 
+data_split <- initial_split(db, prop = 3/4)
+
+# Create data frames for the two sets:
+train_data <- training(data_split)
+test_data  <- testing(data_split)
+
+nrow(test_data)
+
+train_data %>% nrow()
+```
+Ahora lo que haremos es seleccionar las variables que a nosotras nos parecían mas relevantes para este planteamiento.
+```{r}
+train <- subset(train_data, select = c(is_walk, distance , calories, athlete, max_speed))
+test <- subset(test_data, select = c(is_walk, distance , calories, athlete, max_speed))
+train <- as.data.frame(train)
+test <-as.data.frame(test)
+
+
+
+```
+Convertimos la variable is walk, que es numerica, a factor, ya que el arbol de decisión predice clases.
+```{r}
+
+train$is_walk<-as.factor(train$is_walk)
+test$is_walk<-as.factor(test$is_walk)
+
+
+
 ```
 
+Comenzamos modelando con el set de datos de entrenamiento y como predictoras todas las otras variables.
+
+```{r}
+
+
+arbol_1 <- rpart(formula = is_walk ~ ., data = train, method = "class")
+
+arbol_1
+
+rpart.plot(arbol_1)
+```
+Podemos observar como, al igual que en el modelo anterior, la unica variable relevante y la que hace la distinción entre las dos clases, es la variable max_speed: bajo 7.2 es considerada una tipo de actividad a pie, y sobre 7.3 es considerada tipo de actividad en bicicleta, lo que tiene mucho sentido.
+
+
+A continuacion probaremos como funciona el modelo con el set de datos de prueba, y probaremos su despeño mediante lo que nos indica la matriz de confusion y tambien el valor de AUC, que mientras mas cercano a 1 mejor esta clasificando el modelo.
+```{r}
+
+prediccion_1  <- predict(arbol_1, newdata = test, type = "class")
+
+test$prediccion_1 <- prediccion_1
 
 
 
+test$is_walk<- as.factor(test$is_walk)
+
+
+confusionMatrix(prediccion_1, test[["is_walk"]])
+ 
+ auc(test$is_walk %>% as.integer()
+, test$prediccion_1 %>% as.integer())
+
+
+```
+De la  matriz de confusion podemos concluir que el modelo tiene una exactitud (accuracy) de casi un 60%. Este indicador mide el porcentaje de prediccciones correctas. La exactitud en este caso no es muy alta, pero tambien hay que saber q este indicador no sirve en data sets poco equilibrados, y en este caso sabemos que casi el 70% de los datos corresponde a una clase y el 30% a la otra, asi que no nos podemos guiar mucho por este resultado.
+Tambien podemos observar una sensitividad de casi el 70%, este indicador muestra el porcentaje de resultados positivos detectados, que en este caso es la clase 0 (a bicileta). Por lo que se podria decir que el modelo es relativamente bueno prediciendo o detectando las actividades en bicicleta. No asi las actividades a pie, lo que nos muestra el resultado de "especificidad", que indica el porcentaje de casos negativos detectados (actividades a pie), que es de un 41%, lo que es bastante bajo.
+
+De todas formas el resultado de el area bajo la curva ROC (AUC) es bastante alto, llegando al 91%, por lo que de todas formas el modelo tiene un muy buen desempeño bajo este indicador.
+
+
+## Naive Bayes
+
+Por último probaremos el modelo Naive Bayes, utilizando la misma metodología que para los modelos anteriores, separando la data en un trainset y un test set de 75% y 25% respectivamente.
+Tambien se seleccionan las variables que se consideran mas importantes en un subset.
+
+(Se decidio utilizar la variable "is_walk" nuevamente como la variable a predecir, de esta manera se puede hacer una mejor comparación con el modelo de arbol de decisión en cuanto a la matriz de confusión)
+```{r}
+
+set.seed(369)
+data_split <- initial_split(db, prop = 3/4)
+
+# Create data frames for the two sets:
+train_data <- training(data_split)
+test_data  <- testing(data_split)
+
+nrow(test_data)
+
+train_data %>% nrow()
+
+train <- subset(train_data, select = c(is_walk, distance , calories, athlete, max_speed))
+test <- subset(test_data, select = c(is_walk, distance , calories, athlete, max_speed))
+train <- as.data.frame(train)
+test <-as.data.frame(test)
+
+```
+Ahora implementaremos el modelo de Naive bayes con el train set.
+```{r}
+modeloNB <- naiveBayes(is_walk ~ ., data = train)
+pred <- predict(modeloNB, test, type ="class")
+
+modeloNB
+```
+Ahora veremos el despempeño del modelo con la matriz de confusión y el AUC.
+```{r}
+
+test$prob <- pred
+#predict(arbol_1, newdata = test, type = "class")
+str(test)
+
+confusionMatrix(test$prob %>% as.factor(), test$is_walk %>% as.factor())
+
+
+auc(test$is_walk %>% as.integer(),
+test$prob %>% as.integer())
+```
+De la  matriz de confusion podemos concluir que el modelo tiene una exactitud (accuracy) de casi un 85%. Como se mencionó anteriormente, este indicador mide el porcentaje de prediccciones correctas. La exactitud en este caso es bastante alta, Pero nuevamente este resultado no sirve mucho ya que la distribución de las observaciones entre los factores es muy desigual.
+Tambien podemos observar sensitividad bastante alta, siendo esta de un 80%. Como se mencionó anteriormente, este indicador muestra el porcentaje de resultados positivos detectados, que nuevamente corresponde a la clase 0 que es a bicicleta, la clase con mayor porcentaje de datos. A pesar de lo anterior, la especificidad, que mide el porcentaje de los resultados negativos detectados, es aun mas alta, siendo de un 92%. Por lo que a pesar de que hubieran mas datos del tipo 0, al modelo se le dio mejor predecir el del tipo 1 (a pie).
+
+De todas formas el resultado de el area bajo la curva ROC (AUC) es también alto, llegando al 86%, por lo que de todas formas el modelo tiene un buen desempeño bajo este indicador.
+
+
+
+## Conclusión
+
+De todo lo analizado con anterioridad podriamos decir que el modelo con mejor AUC es el de regresión logística, siendo este de casi un 93%, pero le gana por muy poco al de arbol de decisión que tenia un 91%, pero por bastante al de Naive Bayes. 
+
+Si hablamos de la matriz de confusión, no fuimos capaces de hacer una para el modelo de regresión logística, pero si para el resto de los modelos. En el caso del accuracy, el modelo con mejor desempeño fue el de Naive Bayes, teniendo este casi un 30% mas de exactitud que el de Arbol de decision. De todas maneras no nos podemos basar en este indicador, ya que como se dijo con anterioridad, no sirve para set de datos que no tienen igual de distribuidos los datos entre las clases, como pasa en este caso. 
+
+Si hablamos de la sensitividad y la especificidad, en ambos casos el modelo de naive bayes es mejor que el de arbol de decisión por mucho mas, teniendo el modelo de Naive Bayes resultados bastante cercanos a 1.
+
+De lo anterior, el modelo que eligiramos nosotras sería el de Regresión logística solo por su alto resultado en el AUC, pero de todas maneras faltaría analizar su matriz de confusión. En segundo lugar utilizariamos el modelo de Naive Bayes, ya que a pesar de tener un AUC mas bajo que el de arbol de decisión, sigue dentro de un rango aceptable, y su despempeño en los indicadores de la matriz de confusión es mucho mejor.
+
+De todas maneras para una proxima ocasión, utilizaría un data set con datos distribuidos de la manera mas parecida posible para mejores resultados.
